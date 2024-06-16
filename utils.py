@@ -4,7 +4,7 @@ import numpy as np
 import pymc as pm
 import arviz as az
 import graphviz as gr
-import networkx as nx
+# import networkx as nx
 from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import List, Union, Callable
