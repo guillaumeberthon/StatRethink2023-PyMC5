@@ -7,7 +7,8 @@ import graphviz as gr
 import networkx as nx
 from matplotlib import pyplot as plt
 from pathlib import Path
-from typing import List, Union, Callable
+from functools import partial
+from typing import List, Callable, Optional, Tuple, Any
 
 HERE = Path(".")
 
@@ -220,13 +221,27 @@ def create_variables_dataframe(*variables: List[np.ndarray]) -> pd.DataFrame:
     return pd.DataFrame(np.vstack(variables).T, columns=column_names)
 
 
-def plot_pymc_distribution(distribution: pm.Distribution, **distribution_params):
-    """Plot a PyMC Distribution with specific distrubution parameters
+def plot_pymc_distribution(distribution: pm.Distribution, 
+                            draws: int = 2000, 
+                            random_seed: int = 1, 
+                            label: Optional[str] = None,
+                            ax: Optional[plt.Axes] = None,
+                              **distribution_params):
+    """
+    Plot a PyMC Distribution with specific distribution parameters.
 
     Parameters
     ----------
     distribution : pymc.Distribution
-        The class of distribution to
+        The class of distribution to plot.
+    draws : int, optional
+        The number of draws/samples to generate from the distribution, by default 1000.
+    random_seed : int, optional
+        Random seed for reproducibility, by default 1.
+    ax : matplotlib.Axes, optional
+        The axes object to plot on. If None, a new axes object will be created.
+    label : str, optional
+        The label for the distribution, used in the legend.
     **distribution_params : dict
         Distribution-specific parameters.
 
@@ -235,10 +250,23 @@ def plot_pymc_distribution(distribution: pm.Distribution, **distribution_params)
     ax : matplotlib.Axes
         The axes object associated with the plot.
     """
-    with pm.Model() as _:
-        d = distribution(name=distribution.__name__, **distribution_params)
-        draws = pm.draw(d, draws=10_000)
-    return az.plot_dist(draws)
+    # Create the distribution without a model context
+    dist_instance = distribution.dist(**distribution_params)
+    
+    # Generate samples/draws from the distribution
+    samples = pm.draw(dist_instance, draws=draws, random_seed=random_seed)
+    
+    # Plot the distribution
+    if ax is None:
+        ax = plt.gca()
+    az.plot_dist(samples, ax=ax, label=label)
+    
+    return ax
+
+# Example usage:
+# ax = plot_pymc_distribution(pm.Gamma, alpha=2, beta=1)
+# plt.show()
+
 
 
 def savefig(filename):
@@ -389,3 +417,415 @@ def simulate_2_parameter_bayesian_learning(
 
     plt.title(f"N={len(y_obs)}")
     plt.legend(loc="upper left")
+
+
+# Helper function for plotting GP kernels
+def plot_kernel_function(
+    kernel_function: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    max_distance: float = 1.0,
+    resolution: int = 100,
+    label: Optional[str] = None,
+    ax: Optional[plt.Axes] = None,
+    **line_kwargs: Any
+) -> None:
+    """
+    Plots a kernel function over a range of distances.
+
+    Parameters:
+    kernel_function (Callable[[np.ndarray, np.ndarray], np.ndarray]): The kernel function to plot. It should take two 2D arrays as inputs and return a 2D covariance matrix.
+    max_distance (float): The maximum distance to plot on the x-axis. Default is 1.0.
+    resolution (int): The number of points to plot. Default is 100.
+    label (Optional[str]): The label for the plot. Default is None.
+    ax (Optional[plt.Axes]): The matplotlib Axes object to plot on. If None, uses the current Axes. Default is None.
+    **line_kwargs (Any): Additional keyword arguments passed to the plot function.
+
+    Returns:
+    None
+
+    Example:
+    plot_kernel_function(quadratic_distance_kernel)
+    """
+
+    # Generate points from 0 to max_distance
+    X = np.linspace(0, max_distance, resolution)[:, None]
+
+    # Compute the covariance matrix using the kernel function
+    covariance = kernel_function(X, X)
+
+    # Generate distances for the x-axis
+    distances = np.linspace(0, max_distance, resolution)
+
+    # If an Axes object is provided, use it; otherwise, use the current Axes
+    if ax is not None:
+        plt.sca(ax)
+
+    # Plot the first row of the covariance matrix against distances
+    plt.plot(distances, covariance[0, :], label=label, **line_kwargs)
+
+    # Set plot limits and labels
+    plt.xlim([0, max_distance])
+    plt.ylim([-0.05, 1.05])
+    plt.xlabel("|X1 - X2|")
+    plt.ylabel("Covariance")
+
+    # Add a legend if a label is provided
+    if label is not None:
+        plt.legend()
+
+# GP Kernel definitions
+def quadratic_distance_kernel(X0: np.ndarray, X1: np.ndarray, eta: float = 1, sigma: float = 0.5) -> np.ndarray:
+    """
+    Computes the quadratic distance kernel matrix between two sets of vectors.
+
+    Parameters:
+    X0 (np.ndarray): First input array of shape (n_samples_0, n_features).
+    X1 (np.ndarray): Second input array of shape (n_samples_1, n_features).
+    eta (float): Scaling factor for the kernel. Default is 1.
+    sigma (float): Bandwidth parameter for the kernel. Default is 0.5.
+
+    Returns:
+    np.ndarray: Kernel matrix of shape (n_samples_0, n_samples_1).
+
+    Example:
+    plot_kernel_function(quadratic_distance_kernel)
+    """
+
+    # Validate inputs
+    if not isinstance(X0, np.ndarray) or not isinstance(X1, np.ndarray):
+        raise ValueError("X0 and X1 must be numpy arrays.")
+    if X0.shape[1] != X1.shape[1]:
+        raise ValueError("The number of features (columns) in X0 and X1 must be the same.")
+
+    # Compute the L2 norm squared of each row in X0 and X1
+    X0_norm_squared = np.sum(X0 ** 2, axis=1)
+    X1_norm_squared = np.sum(X1 ** 2, axis=1)
+
+    # Compute the squared Euclidean distances using the linear algebra identity:
+    # ||x - y||^2 = ||x||^2 + ||y||^2 - 2 * (x @ y)
+    squared_distances = X0_norm_squared[:, np.newaxis] + X1_norm_squared[np.newaxis, :] - 2 * np.dot(X0, X1.T)
+
+    # Compute the kernel matrix
+    rho = 1 / sigma ** 2
+    kernel_matrix = eta ** 2 * np.exp(-rho * squared_distances)
+
+    return kernel_matrix
+
+
+def ornstein_uhlenbeck_kernel(X0, X1, eta_squared=1, rho=4):
+    distances = np.abs(X1[None, :] - X0[:, None])
+    return eta_squared * np.exp(-rho * distances)
+
+
+def periodic_kernel(X0, X1, eta=1, sigma=1, periodicity=.5):
+    distances = np.sin((X1[None, :] - X0[:, None]) * periodicity) ** 2
+    rho = 2 / sigma ** 2
+    return eta ** 2 * np.exp(-rho * distances)
+
+
+
+# Helper function for plotting Gaussian Processes
+def plot_gaussian_process(
+    X: np.ndarray,
+    samples: Optional[np.ndarray] = None,
+    mean: Optional[np.ndarray] = None,
+    cov: Optional[np.ndarray] = None,
+    X_obs: Optional[np.ndarray] = None,
+    Y_obs: Optional[np.ndarray] = None,
+    uncertainty_prob: float = 0.89
+) -> None:
+    """
+    Plots a Gaussian Process with optional samples, mean, covariance, and observed data.
+
+    Parameters:
+    X (np.ndarray): The input array of shape (n_samples,).
+    samples (Optional[np.ndarray]): Samples from the Gaussian Process of shape (n_samples, n_points). Default is None.
+    mean (Optional[np.ndarray]): The mean of the Gaussian Process of shape (n_points,). Default is None.
+    cov (Optional[np.ndarray]): The covariance matrix of the Gaussian Process of shape (n_points, n_points). Default is None.
+    X_obs (Optional[np.ndarray]): Observed input data of shape (n_obs_samples,). Default is None.
+    Y_obs (Optional[np.ndarray]): Observed output data of shape (n_obs_samples,). Default is None.
+    uncertainty_prob (float): The probability for the uncertainty interval. Default is 0.89.
+
+    Returns:
+    None
+
+    """
+    X = X.ravel()
+
+    # Plot GP samples
+    if samples is not None:
+        for ii, sample in enumerate(samples):
+            label = "GP samples" if ii == 0 else None
+            plt.plot(X, sample, color=f"C{ii}", linewidth=1, label=label)
+
+    # Add GP mean, if provided
+    if mean is not None:
+        mean = mean.ravel()
+        plt.plot(X, mean, color='k', label='GP mean')
+
+        # Add uncertainty around mean if covariance matrix is provided
+        if cov is not None:
+            z = stats.norm.ppf(1 - (1 - uncertainty_prob) / 2)
+            uncertainty = z * np.sqrt(np.diag(cov))
+            plt.fill_between(
+                X,
+                mean + uncertainty,
+                mean - uncertainty,
+                alpha=0.1,
+                color='gray',
+                zorder=1,
+                label='GP uncertainty'
+            )
+
+    # Add any training data points, if provided
+    if X_obs is not None and Y_obs is not None:
+        plt.scatter(X_obs, Y_obs, color='k', label='observations', zorder=100, alpha=1)
+
+    plt.xlim([X.min(), X.max()])
+    plt.ylim([-5, 5])
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.legend()
+
+def plot_gaussian_process_prior(
+    kernel_function: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    n_samples: int = 3,
+    figsize: Tuple[int, int] = (10, 5),
+    resolution: int = 100
+) -> Tuple[plt.Axes, plt.Axes]:
+    """
+    Plots samples from a Gaussian Process prior and the kernel function.
+
+    Parameters:
+    kernel_function (Callable[[np.ndarray, np.ndarray], np.ndarray]): The kernel function to use for the Gaussian Process.
+    n_samples (int): The number of samples to draw from the Gaussian Process prior. Default is 3.
+    figsize (Tuple[int, int]): The size of the figure to create. Default is (10, 5).
+    resolution (int): The resolution for the plot. Default is 100.
+
+    Returns:
+    Tuple[plt.Axes, plt.Axes]: The matplotlib axes objects for the Gaussian Process plot and the kernel function plot.
+
+    Example usage:
+    eta = 1
+    for sigma in [0.1, .25, .5, 1, 2]:
+    kernel_function = partial(quadratic_distance_kernel, eta=eta, sigma=sigma)
+    axs = plot_gaussian_process_prior(kernel_function, n_samples=5)
+    axs[0].set_title(f"prior: $\\eta$={eta}; $\\sigma=${sigma}")
+
+
+    """
+    X = np.linspace(-5, 5, resolution)[:, None]
+
+    prior = gaussian_process_prior(X, kernel_function)
+    samples = prior.rvs(n_samples)
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize)
+    plt.sca(axs[0])
+    plot_gaussian_process(X, samples=samples)
+    
+    plt.sca(axs[1])
+    plot_kernel_function(kernel_function)
+    plt.title("Kernel Function")
+    return axs
+
+def gaussian_process_prior(
+    X_pred: np.ndarray,
+    kernel_function: Callable[[np.ndarray, np.ndarray], np.ndarray]
+) -> stats._multivariate.multivariate_normal_frozen:
+    """
+    Initializes a Gaussian Process prior distribution for the provided kernel function.
+
+    Parameters:
+    X_pred (np.ndarray): The input array of shape (n_samples, n_features).
+    kernel_function (Callable[[np.ndarray, np.ndarray], np.ndarray]): The kernel function to use.
+
+    Returns:
+    stats._multivariate.multivariate_normal_frozen: The Gaussian Process prior distribution.
+    """
+    mean = np.zeros(X_pred.shape).ravel()
+    cov = kernel_function(X_pred, X_pred)
+    return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True)
+
+
+def gaussian_process_posterior(
+    X_obs: np.ndarray,
+    Y_obs: np.ndarray,
+    X_pred: np.ndarray,
+    kernel_function,
+    sigma_y: float = 1e-6,
+    smoothing_factor: float = 1e-6
+) -> stats._multivariate.multivariate_normal_frozen:
+    """
+    Computes the posterior distribution of a Gaussian Process given observations and predictions.
+    
+    Parameters:
+    X_obs (np.ndarray): Observed input data of shape (n_obs, d).
+    Y_obs (np.ndarray): Observed output data of shape (n_obs, ).
+    X_pred (np.ndarray): Input data for prediction of shape (n_pred, d).
+    kernel_function (callable): Kernel function that computes the covariance between points.
+    sigma_y (float): Noise term for the observation covariance. Default is 1e-6.
+    smoothing_factor (float): Smoothing factor added to the prediction covariance. Default is 1e-6.
+    
+    Returns:
+    stats._multivariate.multivariate_normal_frozen: The posterior distribution of the Gaussian Process.
+    """
+    
+    # Observation covariance matrix with noise
+    K_obs = kernel_function(X_obs, X_obs) + sigma_y ** 2 * np.eye(len(X_obs))
+    
+    # Inverse of the observation covariance matrix
+    K_obs_inv = np.linalg.inv(K_obs)
+
+    # Covariance matrix for the prediction points with smoothing
+    K_pred = kernel_function(X_pred, X_pred) + smoothing_factor * np.eye(len(X_pred))
+
+    # Cross-covariance matrix between observations and prediction points
+    K_obs_pred = kernel_function(X_obs, X_pred)
+
+    # Compute the posterior mean
+    posterior_mean = K_obs_pred.T.dot(K_obs_inv).dot(Y_obs)
+    
+    # Compute the posterior covariance
+    posterior_cov = K_pred - K_obs_pred.T.dot(K_obs_inv).dot(K_obs_pred)
+    
+    # Return the posterior distribution as a multivariate normal distribution
+    return stats.multivariate_normal(mean=posterior_mean.ravel(), cov=posterior_cov, allow_singular=True)
+
+def plot_gaussian_process_posterior(
+    X_obs: np.ndarray,
+    Y_obs: np.ndarray,
+    X_pred: np.ndarray,
+    kernel_function,
+    sigma_y: float = 1e-6,
+    n_samples: int = 3,
+    figsize: tuple = (10, 5),
+    resolution: int = 100
+):
+    """
+    Plots the posterior of a Gaussian Process given observations and prediction points.
+    
+    Parameters:
+    X_obs (np.ndarray): Observed input data of shape (n_obs, d).
+    Y_obs (np.ndarray): Observed output data of shape (n_obs, ).
+    X_pred (np.ndarray): Input data for prediction of shape (n_pred, d).
+    kernel_function (callable): Kernel function that computes the covariance between points.
+    sigma_y (float): Noise term for the observation covariance. Default is 1e-6.
+    n_samples (int): Number of samples to draw from the posterior. Default is 3.
+    figsize (tuple): Size of the figure for plotting. Default is (10, 5).
+    resolution (int): Resolution for the prediction grid. Default is 100.
+    
+    Returns:
+    axs (np.ndarray): Array of matplotlib Axes objects.
+
+    Example usage to plot Bayesian GP
+    # Generate some training data
+    X_pred = np.linspace(-5, 5, 100)[:, None]
+    X_obs = np.linspace(-4, 4, 5)[:, None]
+    Y_obs = np.sin(X_obs) ** 2 - np.cos(X_obs) #some complex function
+
+    # Initialize the kernel function
+    sigma_y = .25
+    sigma_kernel = .75
+    eta_kernel = 1
+    kernel_function = partial(quadratic_distance_kernel, eta=eta_kernel, sigma=sigma_kernel)
+
+    # Plot posterior
+    axs = plot_gaussian_process_posterior(X_obs, Y_obs, X_pred, kernel_function, sigma_y=sigma_y, n_samples=3)
+    axs[0].set_title(f"posterior");
+    axs[1].set_title(f"kernel function:\n$\\eta$={eta}; $\\sigma=${sigma}")
+
+    """
+    
+    # Create a prediction grid
+    X = np.linspace(-5, 5, resolution)[:, None]
+    
+    # Compute the Gaussian Process posterior
+    posterior = gaussian_process_posterior(X_obs, Y_obs, X, kernel_function, sigma_y=sigma_y)
+    
+    # Sample from the posterior
+    samples = posterior.rvs(n_samples)
+
+    # Set up the subplots
+    fig, axs = plt.subplots(1, 2, figsize=figsize)
+    
+    # Plot the Gaussian Process samples and the posterior distribution
+    plt.sca(axs[0])
+    plot_gaussian_process(
+        X,
+        samples=samples,
+        mean=posterior.mean,
+        cov=posterior.cov,
+        X_obs=X_obs,
+        Y_obs=Y_obs
+    )
+    
+    # Plot the kernel function
+    plt.sca(axs[1])
+    plot_kernel_function(kernel_function, color='k')
+    plt.title("Kernel Function")
+    
+    return axs
+
+def plot_predictive_covariance(
+    predictive: xr.Dataset,
+    n_samples: int = 30,
+    color: str = 'C0',
+    label: Optional[str] = None
+) -> None:
+    """
+    Plots the predictive covariance for a Gaussian Process.
+
+    Parameters:
+    predictive (dict): Dictionary containing the predictive samples. Must contain 'eta_squared' and 'rho_squared'.
+    n_samples (int): Number of samples to plot. Default is 30.
+    color (str): Color for the plot lines. Default is 'C0'.
+    label (Optional[str]): Label for the plot lines. Default is None.
+
+    Returns:
+    None
+
+    Example: with prior_predictive from a pymc model
+    plot_predictive_covariance(prior_predictive,
+                            n_samples=10,
+                            label='Kernel function prior')
+    plt.ylim([0, 2]);
+    plt.title("Prior Covariance Functions");
+
+    """
+    
+    # Extract the samples for eta_squared and rho_squared, and compute their respective values
+    eta_samples = np.sqrt(predictive['eta_squared'].values[0, :n_samples])
+    sigma_samples = 1 / np.sqrt(predictive['rho_squared'].values[0, :n_samples])
+
+    # Plot the covariance function for each sample
+    for idx, (eta, sigma) in enumerate(zip(eta_samples, sigma_samples)):
+        # Use the label only for the first line
+        current_label = label if idx == 0 else None
+        
+        # Define the kernel function with the current sample values
+        kernel_function = partial(quadratic_distance_kernel, eta=eta, sigma=sigma)
+        
+        # Plot the kernel function
+        plot_kernel_function(kernel_function, color=color, label=current_label, alpha=0.5, linewidth=5, max_distance=7)
+
+#######################
+# Regression test section
+
+def main() -> None:
+    """
+    Main function to test the plot_pymc_distribution function.
+    """
+    fig, ax = plt.subplots()
+
+    # Plot multiple distributions
+    plot_pymc_distribution(pm.Gamma, alpha=2, beta=1, ax=ax, label='Gamma(alpha=2, beta=1)')
+    plot_pymc_distribution(pm.Normal, mu=0, sigma=1, ax=ax, label='Normal(mu=0, sigma=1)')
+    plot_pymc_distribution(pm.Exponential, lam=1, ax=ax, label='Exponential(lam=1)')
+
+    # Add a legend
+    ax.legend()
+
+    # Display the plot
+    plt.show()
+
+if __name__ == '__main__':
+    main()
