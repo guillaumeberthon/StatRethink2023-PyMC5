@@ -3,11 +3,13 @@ import pandas as pd
 import numpy as np
 import pymc as pm
 import arviz as az
+import xarray as xr
 import graphviz as gr
 import networkx as nx
 from matplotlib import pyplot as plt
 from pathlib import Path
 from functools import partial
+from scipy import stats as stats
 from typing import List, Callable, Optional, Tuple, Any
 
 HERE = Path(".")

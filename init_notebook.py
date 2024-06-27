@@ -5,10 +5,12 @@ import statsmodels.formula.api as smf
 import pymc as pm
 import xarray as xr
 import arviz as az
-import utils as utils
-
 from scipy import stats as stats
+
+import utils as utils
+from functools import partial
 from matplotlib import pyplot as plt
+from typing import List, Callable, Optional, Tuple, Any
 
 
 # ---
