@@ -809,6 +809,49 @@ def plot_predictive_covariance(
         # Plot the kernel function
         plot_kernel_function(kernel_function, color=color, label=current_label, alpha=0.5, linewidth=5, max_distance=7)
 
+
+def pymc_sample(model: pm.Model, 
+                tune: int = 4000, 
+                draws: int = 4000, 
+                nuts_sampler: str = 'numpyro', 
+                log_likelihood: bool = True, 
+                target_accept: float = 0.9) -> xr.Dataset:
+    """
+    Sample from a PyMC model with standardized settings.
+
+    Parameters:
+    -----------
+    model : pm.Model
+        The PyMC model to sample from.
+    tune : int, default 4000
+        Number of tuning steps.
+    draws : int, default 4000
+        Number of draws from the posterior.
+    nuts_sampler : str, default 'numpyro'
+        The NUTS sampler to use ('numpyro' or 'default').
+    log_likelihood : bool, default True
+        Whether to store the log_likelihood in the inference data.
+    target_accept : float, default 0.9
+        The target acceptance probability for step size adaptation.
+
+    Returns:
+    --------
+    xarray.Dataset
+        The inference data containing the posterior samples and other diagnostics.
+    """
+
+    with model:
+        idata = pm.sample(tune=tune,
+                          draws=draws,
+                          chains=4,
+                          nuts_sampler=nuts_sampler,
+                          idata_kwargs={'log_likelihood': log_likelihood},
+                          target_accept=target_accept)
+    return idata
+
+
+    
+
 #######################
 # Regression test section
 
