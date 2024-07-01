@@ -809,6 +809,41 @@ def plot_predictive_covariance(
         # Plot the kernel function
         plot_kernel_function(kernel_function, color=color, label=current_label, alpha=0.5, linewidth=5, max_distance=7)
 
+def plot_regression_line(x: np.ndarray, y: np.ndarray, color: str, label: str, **plot_kwargs) -> None:
+    """
+    Plot a regression line based on input data.
+
+    Parameters:
+    - x (np.ndarray): The independent variable data.
+    - y (np.ndarray): The dependent variable data.
+    - color (str): The color of the regression line.
+    - label (str): The label for the regression line.
+    - **plot_kwargs: Additional keyword arguments to be passed to the plotting function.
+
+    Returns:
+    - None
+    """
+    
+    # Remove NaNs from y and corresponding x values
+    valid_idx = ~np.isnan(y)
+    
+    # Handle case where valid_idx is empty (no valid data)
+    if not np.any(valid_idx):
+        raise ValueError("No valid data points to plot the regression line.")
+    
+    # Prepare the matrix for the linear regression
+    X = np.vstack((np.ones_like(x[valid_idx]), x[valid_idx])).T
+    
+    # Perform linear regression to find the slope and intercept
+    intercept, slope = np.linalg.lstsq(X, y[valid_idx], rcond=None)[0]
+    
+    # Generate points for the regression line
+    xs = np.linspace(x.min(), x.max(), 100)
+    ys = xs * slope + intercept
+    
+    # Plot the regression line using the provided utility function
+    plot_line(xs, ys, color=color, label=label, **plot_kwargs)
+
 
 def pymc_sample(model: pm.Model, 
                 tune: int = 4000, 
