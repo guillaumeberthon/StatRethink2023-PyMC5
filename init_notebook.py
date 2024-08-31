@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-import statsmodels.formula.api as smf
+# import statsmodels.formula.api as smf
 import pymc as pm
 import xarray as xr
 import arviz as az
